@@ -708,7 +708,7 @@ export async function analyzeVisualEvidence(
   const response = await processGeminiAPI(apiKey, {
     mode: 'visual_reference_analysis',
     moduleName: 'Visual Reference Engine - Evidence Analyzer',
-    model: 'gemini-3.7-flash',
+    model: 'gemini-3.5-flash',
     require_json: true,
     contents: [{ parts: [imagePart, textPart] }]
   });

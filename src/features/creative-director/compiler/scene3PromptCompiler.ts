@@ -34,7 +34,8 @@ import {
   SHARED_AVATAR_POSE_PRIORITY_RULE,
   AvatarIdentityContext,
   resolveBrandMarkAuthority,
-  isBrandMarkActive
+  isBrandMarkActive,
+  serializeScene3CleanAvatarIdentity
 } from '../../visual-reference-engine';
 import { renderReferenceCoverageAndMotionSafety } from '../services/productGroundingService';
 import {
@@ -514,6 +515,11 @@ export function renderScene3AvatarIdentityLock(
     `- Lock Separation: AVATAR IDENTITY LOCK is strictly distinct from PRODUCT OBJECT LOCK. Avatar reference locks the human presenter only.`,
     `- Identity Continuity: Maintain consistent facial identity throughout all 8.0 seconds with zero facial morphing or identity drift.`
   ];
+
+  const cleanIntrinsicProfile = serializeScene3CleanAvatarIdentity(context);
+  if (cleanIntrinsicProfile && cleanIntrinsicProfile.length > 0) {
+    lines.push(`- Intrinsic Identity Profile: ${cleanIntrinsicProfile}`);
+  }
 
   if (isBrandMarkActive(context.brandMarkProfile)) {
     const brandMarkResult = resolveBrandMarkAuthority(context.brandMarkProfile);

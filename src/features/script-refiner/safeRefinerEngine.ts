@@ -2079,13 +2079,13 @@ export async function refineScript(
 
   const prompt = buildScriptRefinerPrompt(normalized, options);
 
-  // Candidate models: prioritize stable modern Gemini 3.x models
+  // Candidate models: prioritize stable modern Gemini 3.x models (gemini-3.5-flash is stable and active)
   const candidateModels = [
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
     "gemini-3.8-flash",
     "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite"
+    "gemini-3.6-flash"
   ];
   let lastError: any = null;
 

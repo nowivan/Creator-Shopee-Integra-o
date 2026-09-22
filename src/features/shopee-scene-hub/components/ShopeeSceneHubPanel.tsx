@@ -12,16 +12,20 @@ import {
   ShopeeSceneHubPanelProps
 } from '../types';
 import { runShopeeSceneHubPipeline, validateShopeeDialogueText } from '../shopeeSceneBrain';
+import { mapProductWorkspaceToShopeeContext } from '../shopeeProductMapper';
+import { analyzeProductFactualGrounding, createNormalizedProductContext } from '../../creative-director/services/productGroundingService';
 import {
   ShopeeVideoComplianceGuard,
   ShopeeCompliancePreflightPanel
 } from '../../shopee-compliance';
 
 export const ShopeeSceneHubPanel: React.FC<ShopeeSceneHubPanelProps> = ({
+  currentKey,
   productWorkspace,
   onUploadProductImage,
   onRemoveProductImage,
   onAnalyzeProduct,
+  onUpdateProductContext,
   sessionSnapshot,
   onSessionSnapshotChange
 }) => {
@@ -168,6 +172,108 @@ export const ShopeeSceneHubPanel: React.FC<ShopeeSceneHubPanelProps> = ({
   );
   const isGrounded = productWorkspace?.sourceOfTruthStatus === 'grounded' || Boolean(normCtx?.identity);
 
+  // Product Information Extraction State
+  const [isAnalyzingProduct, setIsAnalyzingProduct] = useState(false);
+  const [extractionSuccess, setExtractionSuccess] = useState(false);
+  const [extractionError, setExtractionError] = useState<string | null>(null);
+  const [lastAnalyzedFingerprint, setLastAnalyzedFingerprint] = useState<string | null>(null);
+  const [showExtractedDetails, setShowExtractedDetails] = useState(false);
+
+  // Compute current product fingerprint to detect image replacements
+  const currentProductFingerprint = useMemo(() => {
+    if (!productWorkspace) return null;
+    return (
+      productWorkspace.productRevisionId ||
+      productWorkspace.productImagePreview ||
+      productWorkspace.productImageName ||
+      null
+    );
+  }, [
+    productWorkspace?.productRevisionId,
+    productWorkspace?.productImagePreview,
+    productWorkspace?.productImageName
+  ]);
+
+  // Sync lastAnalyzedFingerprint if workspace is already grounded on mount
+  useEffect(() => {
+    if (isGrounded && currentProductFingerprint && !lastAnalyzedFingerprint) {
+      setLastAnalyzedFingerprint(currentProductFingerprint);
+    }
+  }, [isGrounded, currentProductFingerprint, lastAnalyzedFingerprint]);
+
+  // Stale detection: image changed after an analysis was previously performed
+  const isImageStale = useMemo(() => {
+    if (!hasProduct) return false;
+    if (productWorkspace?.groundingStatus === 'stale') return true;
+    if (lastAnalyzedFingerprint && currentProductFingerprint && lastAnalyzedFingerprint !== currentProductFingerprint) {
+      return true;
+    }
+    return false;
+  }, [hasProduct, productWorkspace?.groundingStatus, lastAnalyzedFingerprint, currentProductFingerprint]);
+
+  // Canonical resolved product context from Shopee Product Mapper
+  const resolvedProductContext = useMemo(() => {
+    if (!productWorkspace) return null;
+    return mapProductWorkspaceToShopeeContext(productWorkspace);
+  }, [productWorkspace]);
+
+  // Action: Extract / Refresh Product Information using Existing Canonical Pipeline
+  const handleExtractProductInfo = async () => {
+    if (isAnalyzingProduct || !hasProduct) return;
+    setIsAnalyzingProduct(true);
+    setExtractionError(null);
+    setExtractionSuccess(false);
+
+    try {
+      if (onAnalyzeProduct) {
+        // Reuse parent grounding analysis pipeline with forceReanalyze: true to refresh
+        await onAnalyzeProduct({
+          productName: productWorkspace?.productIdentity || normCtx?.identity || undefined,
+          category: normCtx?.category || undefined,
+          forceReanalyze: true
+        });
+      } else if (productWorkspace?.productImagePreview) {
+        // Fallback: direct call to existing canonical grounding pipeline if standalone
+        const grounding = await analyzeProductFactualGrounding(
+          {
+            imageInput: {
+              file: productWorkspace.productImageFile || undefined,
+              base64: productWorkspace.productImagePreview
+            },
+            productName: productWorkspace.productIdentity || normCtx?.identity || undefined
+          },
+          currentKey
+        );
+        const normalized = createNormalizedProductContext(grounding, []);
+        if (onUpdateProductContext) {
+          onUpdateProductContext((prev: any) => ({
+            ...prev,
+            groundingResult: grounding,
+            normalizedProductContext: normalized,
+            productIdentity: normalized.identity,
+            groundingStatus: 'ready',
+            groundingError: null
+          }));
+        }
+      } else {
+        throw new Error('Nenhuma imagem de produto carregada para extração.');
+      }
+
+      setLastAnalyzedFingerprint(currentProductFingerprint);
+      setExtractionSuccess(true);
+      setTimeout(() => {
+        setExtractionSuccess(false);
+      }, 2500);
+    } catch (err: any) {
+      console.error('Falha ao extrair informações do produto no Shopee Scene Hub:', err);
+      // Non-blocking error message
+      setExtractionError('Não foi possível extrair as informações do produto. Tente novamente.');
+      // Non-destructive: previous valid product context is preserved and never cleared!
+    } finally {
+      setIsAnalyzingProduct(false);
+    }
+  };
+
   // Copy helpers
   const handleCopy = async (text: string, key: string) => {
     await copyToClipboard(text);
@@ -302,31 +408,151 @@ export const ShopeeSceneHubPanel: React.FC<ShopeeSceneHubPanelProps> = ({
             </div>
 
             {hasProduct ? (
-              <div className="flex items-start gap-4 bg-slate-950/60 p-3 rounded-lg border border-slate-800">
-                {productWorkspace?.productImagePreview ? (
-                  <img
-                    src={productWorkspace.productImagePreview}
-                    alt="Produto"
-                    className="w-16 h-16 object-cover rounded-lg border border-slate-700 shrink-0 shadow-md"
-                  />
-                ) : (
-                  <div className="w-16 h-16 rounded-lg bg-slate-800 flex items-center justify-center text-slate-500 shrink-0">
-                    <LucideIcon name="image" className="w-6 h-6" />
+              <div className="space-y-3">
+                <div className="flex items-start gap-4 bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+                  {productWorkspace?.productImagePreview ? (
+                    <img
+                      src={productWorkspace.productImagePreview}
+                      alt="Produto"
+                      className="w-16 h-16 object-cover rounded-lg border border-slate-700 shrink-0 shadow-md"
+                    />
+                  ) : (
+                    <div className="w-16 h-16 rounded-lg bg-slate-800 flex items-center justify-center text-slate-500 shrink-0">
+                      <LucideIcon name="image" className="w-6 h-6" />
+                    </div>
+                  )}
+                  <div className="space-y-1 min-w-0 flex-1">
+                    <h4 className="text-xs font-bold text-white truncate">
+                      {normCtx?.identity || productWorkspace?.productIdentity || 'Produto Físico Detectado'}
+                    </h4>
+                    <p className="text-[11px] text-slate-400 font-mono">
+                      Cor: <span className="text-orange-300">{normCtx?.canonicalColor || 'Cor Original'}</span>
+                    </p>
+                    {normCtx?.observableDetails && normCtx.observableDetails.length > 0 && (
+                      <p className="text-[10px] text-slate-400 truncate">
+                        {normCtx.observableDetails[0]}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Stale Image Notice */}
+                {isImageStale && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
+                    <LucideIcon name="alert-triangle" className="w-4 h-4 shrink-0 text-amber-400" />
+                    <span className="font-medium text-[11px]">Produto alterado — extraia novamente as informações.</span>
                   </div>
                 )}
-                <div className="space-y-1 min-w-0 flex-1">
-                  <h4 className="text-xs font-bold text-white truncate">
-                    {normCtx?.identity || productWorkspace?.productIdentity || 'Produto Físico Detectado'}
-                  </h4>
-                  <p className="text-[11px] text-slate-400 font-mono">
-                    Cor: <span className="text-orange-300">{normCtx?.canonicalColor || 'Cor Original'}</span>
-                  </p>
-                  {normCtx?.observableDetails && normCtx.observableDetails.length > 0 && (
-                    <p className="text-[10px] text-slate-400 truncate">
-                      {normCtx.observableDetails[0]}
-                    </p>
+
+                {/* Non-blocking Extraction Error */}
+                {extractionError && (
+                  <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-xs">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <LucideIcon name="alert-circle" className="w-4 h-4 shrink-0 text-red-400" />
+                      <span className="text-[11px]">{extractionError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setExtractionError(null)}
+                      className="text-slate-400 hover:text-white p-0.5 cursor-pointer"
+                    >
+                      <LucideIcon name="x" className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Explicit Action Button: Extrair / Atualizar Informações */}
+                <button
+                  type="button"
+                  onClick={handleExtractProductInfo}
+                  disabled={isAnalyzingProduct}
+                  className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                    extractionSuccess
+                      ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/50 shadow-sm'
+                      : isImageStale
+                      ? 'bg-amber-600/30 hover:bg-amber-600/40 text-amber-200 border border-amber-500/50 shadow-sm'
+                      : isGrounded
+                      ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                      : 'bg-orange-600/30 hover:bg-orange-600/40 text-orange-200 border border-orange-500/40'
+                  }`}
+                >
+                  {isAnalyzingProduct ? (
+                    <>
+                      <LucideIcon name="loader" className="w-3.5 h-3.5 animate-spin" />
+                      <span>Analisando produto...</span>
+                    </>
+                  ) : extractionSuccess ? (
+                    <>
+                      <LucideIcon name="check" className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>✓ Informações extraídas</span>
+                    </>
+                  ) : (
+                    <>
+                      <LucideIcon name="sparkles" className="w-3.5 h-3.5 text-orange-400" />
+                      <span>{isGrounded && !isImageStale ? 'Atualizar Informações' : 'Extrair Informações'}</span>
+                    </>
                   )}
-                </div>
+                </button>
+
+                {/* Compact Resolved Summary */}
+                {resolvedProductContext && (isGrounded || extractionSuccess) && (
+                  <div className="bg-slate-950/40 p-3 rounded-lg border border-slate-800/80 space-y-2 text-xs">
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-slate-500 block text-[10px] uppercase font-mono">Produto</span>
+                        <span className="text-white font-medium truncate block">{resolvedProductContext.productIdentity}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[10px] uppercase font-mono">Categoria</span>
+                        <span className="text-slate-300 font-medium truncate block">{resolvedProductContext.productArchetype}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[10px] uppercase font-mono">Cor</span>
+                        <span className="text-orange-300 font-medium truncate block">{resolvedProductContext.canonicalColor}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[10px] uppercase font-mono">Fatos Físicos</span>
+                        <span className="text-emerald-400 font-medium">{resolvedProductContext.physicalFacts.length} confirmados</span>
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-slate-400 pt-1.5 border-t border-slate-800/60 flex items-center justify-between">
+                      <span>Detalhes: <strong className="text-slate-200">{resolvedProductContext.observableDetails.length} detectados</strong></span>
+                      <button
+                        type="button"
+                        onClick={() => setShowExtractedDetails(prev => !prev)}
+                        className="text-[10px] font-mono text-orange-400 hover:text-orange-300 underline cursor-pointer"
+                      >
+                        {showExtractedDetails ? 'Ocultar detalhes' : 'Ver detalhes'}
+                      </button>
+                    </div>
+
+                    {showExtractedDetails && (
+                      <div className="mt-2 pt-2 border-t border-slate-800/60 space-y-1.5 text-[10px] text-slate-400 font-mono">
+                        <div>
+                          <span className="text-slate-500 block uppercase">Ambiente Funcional:</span>
+                          <span className="text-slate-300">{resolvedProductContext.functionalEnvironment}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 block uppercase">Dor Específica:</span>
+                          <span className="text-slate-300">{resolvedProductContext.specificPain}</span>
+                        </div>
+                        {resolvedProductContext.allowedInteractions.length > 0 && (
+                          <div>
+                            <span className="text-slate-500 block uppercase">Interações Permitidas:</span>
+                            <span className="text-emerald-300">{resolvedProductContext.allowedInteractions.join(', ')}</span>
+                          </div>
+                        )}
+                        {resolvedProductContext.visibleBenefitProof && (
+                          <div>
+                            <span className="text-slate-500 block uppercase">Prova Visual:</span>
+                            <span className="text-slate-300">{resolvedProductContext.visibleBenefitProof}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="text-center py-5 px-4 bg-slate-950/40 rounded-lg border border-dashed border-slate-800 space-y-2">

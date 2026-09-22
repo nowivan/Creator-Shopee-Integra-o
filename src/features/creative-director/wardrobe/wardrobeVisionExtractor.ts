@@ -277,7 +277,7 @@ export async function extractWardrobeFromAvatar(
   const response = await processGeminiAPI(apiKey, {
     mode: 'wardrobe_vision_extractor',
     moduleName: 'Creative Director - Wardrobe Vision Extractor',
-    model: 'gemini-3.7-flash',
+    model: 'gemini-3.5-flash',
     require_json: true,
     contents: [{ parts: [imagePart, textPart] }]
   }, {

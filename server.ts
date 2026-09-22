@@ -1,7 +1,11 @@
 import express from "express";
 import path from "path";
+import dns from "node:dns";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+
+// Ensure IPv4 is resolved first to prevent fetch failed errors in container network
+dns.setDefaultResultOrder("ipv4first");
 
 // Set node TLS setting to bypass any certificate check issue in sandbox container
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
@@ -116,7 +120,14 @@ async function startServer() {
       let errorMsg = "";
 
       try {
+        // Use 25s timeout to prevent hanging connections
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        fetchOptions.signal = controller.signal;
+        
         response = await fetch(url, fetchOptions);
+        clearTimeout(timeoutId);
+        
         status = response.status;
         if (status >= 400) {
           isError = true;
@@ -141,16 +152,21 @@ async function startServer() {
               contents = [{ parts: [{ text: promptText }] }];
             }
 
-            // Prioritize modern available Gemini 3.x models
+            // Prioritize verified stable models (gemini-3.5-flash is stable and available)
+            // Avoiding known 503 high-demand spike models at the front of the queue
             const requestedModel = payload?.model;
+            const highDemandModels = new Set(["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"]);
+            
             const fallbackChain = [
+              requestedModel && !highDemandModels.has(requestedModel) ? requestedModel : null,
+              "gemini-3.5-flash",
+              "gemini-3.1-flash-lite",
+              "gemini-3.5-flash-lite",
+              "gemini-flash-latest",
               requestedModel,
               "gemini-3.8-flash",
               "gemini-3.7-flash",
-              "gemini-3.6-flash",
-              "gemini-3.5-flash",
-              "gemini-3.1-flash-lite",
-              "gemini-flash-latest"
+              "gemini-3.6-flash"
             ].filter((m): m is string => Boolean(m) && !/gemini-(1\.5|2\.0|2\.5)/i.test(m));
             
             const candidateModels = Array.from(new Set(fallbackChain));
@@ -181,7 +197,7 @@ async function startServer() {
                     proxy_path: "server_failover",
                     failover_used: true,
                     synthetic_fallback_used: false,
-                    requested_model: payload?.model || "gemini-3.8-flash",
+                    requested_model: payload?.model || "gemini-3.5-flash",
                     executed_model: modelName,
                     request_id: clientReqId,
                     raw_text: text,
@@ -195,7 +211,12 @@ async function startServer() {
                   });
                 }
               } catch (mErr: any) {
-                console.warn(`[Proxy Failover] Model ${modelName} attempt failed:`, mErr.message || String(mErr));
+                const is503 = mErr?.message?.includes("503") || mErr?.status === 503;
+                if (is503) {
+                  console.warn(`[Proxy Failover] Model ${modelName} is experiencing high demand (503). Smoothly falling over to next model in chain...`);
+                } else {
+                  console.warn(`[Proxy Failover] Model ${modelName} attempt failed:`, mErr.message || String(mErr));
+                }
               }
             }
           } catch (failoverError: any) {
@@ -232,7 +253,7 @@ async function startServer() {
           proxy_path: "server_failover",
           failover_used: true,
           synthetic_fallback_used: true,
-          requested_model: payload?.model || "gemini-3.8-flash",
+          requested_model: payload?.model || "gemini-3.5-flash",
           executed_model: "synthetic_fallback_engine",
           request_id: clientReqId,
           raw_text: JSON.stringify(fallbackData),

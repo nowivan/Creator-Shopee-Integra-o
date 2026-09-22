@@ -115,6 +115,130 @@ export function renderAvatarIdentityClause(): string {
 }
 
 /**
+ * Sanitizes an avatar identity prompt or free-text description for Scene 3.
+ * Strictly preserves identity-safe traits:
+ * - facial appearance
+ * - facial proportions
+ * - hair
+ * - skin
+ * - stable distinguishing traits
+ * - allowed identity accessories
+ *
+ * Strictly excludes:
+ * - reference background / backdrop / cenário / fundo
+ * - studio lighting / softbox / iluminação
+ * - pose / arms / posture / postura
+ * - camera viewpoint / framing / enquadramento / angle
+ * - crop / composition
+ * - scene objects / interacting objects / props
+ * - wardrobe / clothing unless explicitly inherited
+ * - jewelry unless explicitly allowed
+ */
+export function sanitizeAvatarIdentityText(rawText: string): string {
+  if (!rawText || typeof rawText !== 'string') return '';
+
+  // Split by clauses, sentences, or structured section prefixes
+  const segments = rawText.split(/(?<=[.;\n])\s+/);
+  const cleanSegments: string[] = [];
+
+  for (const seg of segments) {
+    const trimmed = seg.trim();
+    if (!trimmed) continue;
+
+    const lower = trimmed.toLowerCase();
+
+    // Check structured prefixes like "Background:", "Lighting:", "Pose:", "Camera Viewpoint:", "Wardrobe:", "Reference Wardrobe (Contextual):"
+    if (/^(?:reference\s+)?(?:background|backdrop|cen[áa]rio|fundo)\s*:/i.test(lower)) continue;
+    if (/^(?:lighting|studio\s+lighting|ilumina[çc][ãa]o)\s*:/i.test(lower)) continue;
+    if (/^(?:pose|postur[ae]|arms|hands)\s*(?:\([^)]*\))?\s*:/i.test(lower)) continue;
+    if (/^(?:camera|viewpoint|enquadramento|angle)\s*:/i.test(lower)) continue;
+    if (/^(?:crop|composition|composi[çc][ãa]o)\s*:/i.test(lower)) continue;
+    if (/^(?:interacting\s+objects|objects|scene\s+objects)\s*:/i.test(lower)) continue;
+    if (/^(?:reference\s+wardrobe|wardrobe|vestimenta|clothing)\s*(?:\([^)]*\))?\s*:/i.test(lower)) continue;
+    if (/^(?:jewelry|joias|j[óo]ias)\s*:/i.test(lower)) continue;
+
+    // Check standalone sentences that describe excluded domains
+    if (
+      /\b(?:studio\s+background|seamless\s+backdrop|plain\s+backdrop|studio\s+backdrop|white\s+background)\b/i.test(lower) ||
+      /\b(?:studio\s+(?:softbox\s+)?lighting|softbox\s+lighting|diffused\s+studio\s+lighting|key\s+light)\b/i.test(lower) ||
+      /\b(?:arms\s+crossed(?:\s+squared\s+to\s+camera)?|standing\s+static|hands\s+on\s+hips)\b/i.test(lower) ||
+      /\b(?:medium\s+close-?up|eye-?level\s+angle|camera\s+framing|centered\s+viewpoint)\b/i.test(lower)
+    ) {
+      continue;
+    }
+
+    cleanSegments.push(trimmed);
+  }
+
+  return cleanSegments.join(' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+/**
+ * Serializes only identity-safe traits for Scene 3 Identity Lock.
+ * Priority:
+ *   1. IdentityDNA verified traits if available (facial appearance, facial proportions, hair, skin, distinguishing traits).
+ *   2. Sanitized IdentityPrompt free text (stripping background, lighting, pose, camera framing, wardrobe, objects).
+ * Guarantees zero pollution of reference background or ephemeral scene state.
+ */
+export function serializeScene3CleanAvatarIdentity(
+  context?: AvatarIdentityContext | null
+): string {
+  if (!context) return '';
+
+  // 1. If identityPrompt is provided, sanitize it to strip background, lighting, pose, camera, objects, wardrobe
+  if (context.identityPrompt && context.identityPrompt.trim().length > 0) {
+    const cleaned = sanitizeAvatarIdentityText(context.identityPrompt);
+    if (cleaned.length > 0) {
+      return cleaned;
+    }
+  }
+
+  // 2. Otherwise derive from identityDNA verified traits
+  const traits: string[] = [];
+
+  if (context.identityDNA) {
+    const dna = context.identityDNA;
+
+    if (dna.visibleFacialAppearance?.value && dna.visibleFacialAppearance.value !== 'unknown') {
+      traits.push(`Facial Appearance: ${dna.visibleFacialAppearance.value.trim()}`);
+    }
+    if (dna.facialProportions?.value && dna.facialProportions.value !== 'unknown') {
+      traits.push(`Facial Proportions: ${dna.facialProportions.value.trim()}`);
+    }
+    if (dna.hair) {
+      const hairParts: string[] = [];
+      if (dna.hair.color?.value && dna.hair.color.value !== 'unknown') hairParts.push(dna.hair.color.value);
+      if (dna.hair.length?.value && dna.hair.length.value !== 'unknown') hairParts.push(dna.hair.length.value);
+      if (dna.hair.texture?.value && dna.hair.texture.value !== 'unknown') hairParts.push(dna.hair.texture.value);
+      if (dna.hair.style?.value && dna.hair.style.value !== 'unknown') hairParts.push(dna.hair.style.value);
+      if (hairParts.length > 0) {
+        traits.push(`Hair: ${hairParts.join(', ')}`);
+      }
+    }
+    if (dna.skin) {
+      const skinParts: string[] = [];
+      if (dna.skin.visibleTone?.value && dna.skin.visibleTone.value !== 'unknown') skinParts.push(`tone: ${dna.skin.visibleTone.value}`);
+      if (dna.skin.surfaceTexture?.value && dna.skin.surfaceTexture.value !== 'unknown') skinParts.push(`texture: ${dna.skin.surfaceTexture.value}`);
+      if (skinParts.length > 0) {
+        traits.push(`Skin: ${skinParts.join(', ')}`);
+      }
+    }
+    if (dna.distinguishingTraits?.value && Array.isArray(dna.distinguishingTraits.value)) {
+      const validTraits = dna.distinguishingTraits.value.filter(t => t && t !== 'unknown' && t !== 'none');
+      if (validTraits.length > 0) {
+        traits.push(`Distinguishing Traits: ${validTraits.join(', ')}`);
+      }
+    }
+  }
+
+  if (traits.length > 0) {
+    return traits.join('; ');
+  }
+
+  return '';
+}
+
+/**
  * Renders the structured Avatar Identity Reference block for master prompts in Creative Director and Cinematic Engine.
  * Ensures strict separation between avatar identity and product object locks, and inherits brand mark when active.
  */
@@ -142,8 +266,9 @@ export function renderAvatarIdentityBlock(
     `- Lock Separation: AVATAR IDENTITY LOCK is strictly distinct from PRODUCT OBJECT LOCK. Avatar reference locks the human presenter only.`
   ];
 
-  if (context.identityPrompt && context.identityPrompt.trim().length > 0) {
-    lines.push(`- Intrinsic Identity Profile: ${context.identityPrompt.trim()}`);
+  const cleanIdentity = serializeScene3CleanAvatarIdentity(context);
+  if (cleanIdentity && cleanIdentity.length > 0) {
+    lines.push(`- Intrinsic Identity Profile: ${cleanIdentity}`);
   }
 
   if (isBrandMarkActive(context.brandMarkProfile)) {

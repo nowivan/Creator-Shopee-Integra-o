@@ -14,12 +14,57 @@ import {
   AvatarReferenceProfile
 } from '../../visual-reference-engine/types/visualReferenceTypes';
 import {
-  resolveAvatarIdentityContext
+  resolveAvatarIdentityContext,
+  sanitizeAvatarIdentityText
 } from '../../visual-reference-engine/services/avatarIdentityHandoff';
 import {
   DetectedWardrobeProfile,
   WardrobeFieldOrigins
 } from './wardrobeVisionExtractor';
+
+const INVALID_WARDROBE_PATTERNS = [
+  /^unknown(?:\s+unknown)*$/i,
+  /^n\/?a$/i,
+  /^none$/i,
+  /^not\s+visible$/i,
+  /^desconhecid[oa]$/i,
+  /^invis[ií]vel$/i,
+  /^n[aã]o\s+se\s+aplica$/i,
+  /^null$/i,
+  /^undefined$/i
+];
+
+/**
+ * Sanitizes a raw wardrobe field value, rejecting unknown/missing/placeholder tokens.
+ */
+export function sanitizeWardrobeValue(val: any): string | undefined {
+  if (val === null || val === undefined) return undefined;
+  if (typeof val !== 'string') return undefined;
+  const trimmed = val.trim();
+  if (trimmed.length === 0) return undefined;
+  for (const pat of INVALID_WARDROBE_PATTERNS) {
+    if (pat.test(trimmed)) return undefined;
+  }
+  return trimmed;
+}
+
+/**
+ * Cleans a full wardrobe description string from any stray unknown artifacts.
+ */
+export function cleanWardrobeDescriptionText(desc?: string): string | undefined {
+  if (!desc || typeof desc !== 'string') return undefined;
+  let cleaned = desc.trim();
+  if (!cleaned) return undefined;
+  if (sanitizeWardrobeValue(cleaned) === undefined) return undefined;
+
+  // Clean out parts like "and unknown unknown" or "unknown unknown and"
+  cleaned = cleaned
+    .replace(/(?:\s+and)?\s+unknown(?:\s+unknown)*/gi, '')
+    .replace(/^unknown(?:\s+unknown)*\s+(?:and\s+)?/gi, '')
+    .trim();
+
+  return cleaned.length > 0 ? cleaned : undefined;
+}
 
 export interface AvatarExtractedData {
   avatarId: number | string;
@@ -87,8 +132,10 @@ export function extractAvatarFullContext(avatar?: StoredAvatar | null): AvatarEx
     rawProfile?.analysis?.identity?.visibleFacialAppearance?.value ||
     '';
 
-  const presenterIdentity = rawIdentity.trim()
-    ? rawIdentity.trim()
+  const cleanedIdentity = sanitizeAvatarIdentityText(rawIdentity);
+
+  const presenterIdentity = cleanedIdentity.trim()
+    ? cleanedIdentity.trim()
     : `Adult Brazilian ${gender === 'female' ? 'woman' : 'man'} with natural UGC presence`;
 
   // 3. Extract Saved Wardrobe (from detectedWardrobe, profile.wardrobe, analysis.sceneState.wardrobe, or clothing)
@@ -100,48 +147,48 @@ export function extractAvatarFullContext(avatar?: StoredAvatar | null): AvatarEx
   const sceneStateWardrobe = rawProfile?.analysis?.sceneState?.wardrobe || rawProfile?.sceneStateDNA?.wardrobe;
   const explicitWardrobeObj = (rawProfile as any)?.wardrobe || (avatar as any).wardrobe;
 
-  const topType =
+  const topType = sanitizeWardrobeValue(
     savedDetected?.topType ||
     (typeof explicitWardrobeObj === 'object' ? explicitWardrobeObj?.topType || explicitWardrobeObj?.top : undefined) ||
-    sceneStateWardrobe?.top?.type?.value ||
-    undefined;
+    sceneStateWardrobe?.top?.type?.value
+  );
 
-  const topColor =
+  const topColor = sanitizeWardrobeValue(
     savedDetected?.topColor ||
     (typeof explicitWardrobeObj === 'object' ? explicitWardrobeObj?.topColor : undefined) ||
-    sceneStateWardrobe?.top?.color?.value ||
-    undefined;
+    sceneStateWardrobe?.top?.color?.value
+  );
 
-  const topStyle =
+  const topStyle = sanitizeWardrobeValue(
     savedDetected?.topStyle ||
     (typeof explicitWardrobeObj === 'object' ? explicitWardrobeObj?.topStyle : undefined) ||
     sceneStateWardrobe?.top?.fit?.value ||
-    sceneStateWardrobe?.top?.neckline?.value ||
-    undefined;
+    sceneStateWardrobe?.top?.neckline?.value
+  );
 
-  const bottomType =
+  const bottomType = sanitizeWardrobeValue(
     savedDetected?.bottomType ||
     (typeof explicitWardrobeObj === 'object' ? explicitWardrobeObj?.bottomType || explicitWardrobeObj?.bottom : undefined) ||
-    sceneStateWardrobe?.bottom?.type?.value ||
-    undefined;
+    sceneStateWardrobe?.bottom?.type?.value
+  );
 
-  const bottomColor =
+  const bottomColor = sanitizeWardrobeValue(
     savedDetected?.bottomColor ||
     (typeof explicitWardrobeObj === 'object' ? explicitWardrobeObj?.bottomColor : undefined) ||
-    sceneStateWardrobe?.bottom?.color?.value ||
-    undefined;
+    sceneStateWardrobe?.bottom?.color?.value
+  );
 
-  const footwearType =
+  const footwearType = sanitizeWardrobeValue(
     savedDetected?.footwearType ||
     (typeof explicitWardrobeObj === 'object' ? explicitWardrobeObj?.footwearType || explicitWardrobeObj?.footwear : undefined) ||
-    sceneStateWardrobe?.footwear?.type?.value ||
-    undefined;
+    sceneStateWardrobe?.footwear?.type?.value
+  );
 
-  const footwearColor =
+  const footwearColor = sanitizeWardrobeValue(
     savedDetected?.footwearColor ||
     (typeof explicitWardrobeObj === 'object' ? explicitWardrobeObj?.footwearColor : undefined) ||
-    sceneStateWardrobe?.footwear?.color?.value ||
-    undefined;
+    sceneStateWardrobe?.footwear?.color?.value
+  );
 
   const accessories =
     savedDetected?.accessories ||
@@ -151,9 +198,9 @@ export function extractAvatarFullContext(avatar?: StoredAvatar | null): AvatarEx
   // Synthesize or retrieve wardrobe description
   let wardrobeDescription: string | undefined = undefined;
   if (typeof explicitWardrobeObj === 'string' && explicitWardrobeObj.trim().length > 0) {
-    wardrobeDescription = explicitWardrobeObj.trim();
+    wardrobeDescription = cleanWardrobeDescriptionText(explicitWardrobeObj);
   } else if (typeof explicitWardrobeObj === 'object' && typeof explicitWardrobeObj?.description === 'string' && explicitWardrobeObj.description.trim()) {
-    wardrobeDescription = explicitWardrobeObj.description.trim();
+    wardrobeDescription = cleanWardrobeDescriptionText(explicitWardrobeObj.description);
   } else if (topType || bottomType) {
     const parts: string[] = [];
     if (topType) {

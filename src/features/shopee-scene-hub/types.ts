@@ -142,7 +142,7 @@ export interface ShopeeSceneHubPanelProps {
   productWorkspace?: CreativeDirectorProductWorkspace;
   onUploadProductImage?: (file: File) => Promise<void>;
   onRemoveProductImage?: () => void;
-  onAnalyzeProduct?: () => Promise<void>;
+  onAnalyzeProduct?: (overrides?: any) => Promise<any>;
   onUpdateProductContext?: (updater: (prev: any) => any) => void;
   sessionSnapshot?: ShopeeSceneHubSnapshot | null;
   onSessionSnapshotChange?: (snapshot: ShopeeSceneHubSnapshot) => void;
