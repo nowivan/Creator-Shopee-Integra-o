@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Product Consistency & Cinematic Engine",
+  "description": "Professional video script engineering, reverse engineering, and video model prompt generator with absolute consistency locking for watches, perfumes, electronics, packaging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

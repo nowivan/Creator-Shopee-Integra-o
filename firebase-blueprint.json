@@ -1,0 +1,60 @@
+{
+  "entities": {
+    "Bookmark": {
+      "title": "Bookmark",
+      "description": "User saved tool configurations and prompt states",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique bookmark ID" },
+        "userId": { "type": "string", "description": "Owner user authenticated ID" },
+        "toolId": { "type": "string", "description": "Identifier of the tool used" },
+        "toolLabel": { "type": "string", "description": "Friendly name of the tool" },
+        "toolIcon": { "type": "string", "description": "Emoji/Icon descriptor" },
+        "title": { "type": "string", "description": "Custom title provided by user" },
+        "notes": { "type": "string", "description": "Additional user notes" },
+        "timestamp": { "type": "integer", "description": "Creation epoch timestamp" },
+        "state": { "type": "object", "description": "Saved configuration parameters" }
+      },
+      "required": ["id", "userId", "toolId", "toolLabel", "title", "timestamp", "state"]
+    },
+    "History": {
+      "title": "History",
+      "description": "User navigation history of accessed tools",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique history item ID" },
+        "userId": { "type": "string", "description": "User authenticated ID" },
+        "toolId": { "type": "string", "description": "Identifier of the tool accessed" },
+        "label": { "type": "string", "description": "Name of the tool" },
+        "timestamp": { "type": "integer", "description": "Access epoch timestamp" }
+      },
+      "required": ["id", "userId", "toolId", "label", "timestamp"]
+    },
+    "UserPreference": {
+      "title": "UserPreference",
+      "description": "User preferences and active navigation states",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "User authenticated ID" },
+        "activeView": { "type": "string", "description": "Last active view identifier" },
+        "isSidebarOpen": { "type": "boolean", "description": "Whether sidebar is expanded" },
+        "updatedAt": { "type": "integer", "description": "Last update timestamp" }
+      },
+      "required": ["userId", "activeView", "isSidebarOpen", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}/bookmarks/{bookmarkId}": {
+      "schema": { "$ref": "#/entities/Bookmark" },
+      "description": "User specific saved tool settings and templates"
+    },
+    "users/{userId}/history/{historyId}": {
+      "schema": { "$ref": "#/entities/History" },
+      "description": "User specific navigation trail of tool views"
+    },
+    "users/{userId}/preferences/settings": {
+      "schema": { "$ref": "#/entities/UserPreference" },
+      "description": "User specific application settings and layout options"
+    }
+  }
+}

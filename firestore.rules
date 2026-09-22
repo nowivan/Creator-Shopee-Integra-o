@@ -1,0 +1,160 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. Global Safety Net: Default Deny All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Global Reusable Verification Helpers
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        ('firebase' in request.auth.token && 'sign_in_provider' in request.auth.token.firebase && request.auth.token.firebase.sign_in_provider == 'google.com') ||
+        request.auth.uid != null
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Health check endpoint for connection validation on app boot
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // 3. Entity Schemas & Validation Blueprints
+    function isValidBookmark(data) {
+      return data.keys().hasAll(['id', 'userId', 'toolId', 'toolLabel', 'title', 'timestamp', 'state'])
+        && data.keys().size() >= 7
+        && data.keys().size() <= 9
+        && data.id is string
+        && data.id.size() <= 128
+        && data.userId is string
+        && data.userId.size() <= 128
+        && data.toolId is string
+        && data.toolId.size() <= 64
+        && data.toolLabel is string
+        && data.toolLabel.size() <= 128
+        && (!('toolIcon' in data) || (data.toolIcon is string && data.toolIcon.size() <= 64))
+        && data.title is string
+        && data.title.size() <= 200
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000))
+        && data.timestamp is number
+        && data.state is map;
+    }
+
+    function isValidHistory(data) {
+      return data.keys().hasAll(['id', 'userId', 'toolId', 'label', 'timestamp'])
+        && data.keys().size() == 5
+        && data.id is string
+        && data.id.size() <= 128
+        && data.userId is string
+        && data.userId.size() <= 128
+        && data.toolId is string
+        && data.toolId.size() <= 64
+        && data.label is string
+        && data.label.size() <= 128
+        && data.timestamp is number;
+    }
+
+    function isValidPreference(data) {
+      return data.keys().hasAll(['userId', 'activeView', 'isSidebarOpen', 'updatedAt'])
+        && data.keys().size() == 4
+        && data.userId is string
+        && data.userId.size() <= 128
+        && data.activeView is string
+        && data.activeView.size() <= 64
+        && data.isSidebarOpen is bool
+        && data.updatedAt is number;
+    }
+
+    // 4. Secure Rules for Users Collections and Nested Subcollections
+    match /users/{userId} {
+      // Direct access to user's root node is denied.
+      allow read, write: if false;
+
+      // Nested Bookmarks subcollection
+      match /bookmarks/{bookmarkId} {
+        allow get: if isOwner(userId) && isValidId(bookmarkId);
+        allow list: if isOwner(userId);
+        
+        allow create: if isOwner(userId)
+          && isVerifiedUser()
+          && isValidId(bookmarkId)
+          && isValidBookmark(request.resource.data)
+          && request.resource.data.userId == userId
+          && request.resource.data.id == bookmarkId;
+
+        allow update: if isOwner(userId)
+          && isVerifiedUser()
+          && isValidId(bookmarkId)
+          && isValidBookmark(request.resource.data)
+          && request.resource.data.userId == userId
+          && request.resource.data.id == bookmarkId
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['id', 'userId', 'toolId', 'title', 'toolLabel', 'toolIcon', 'notes', 'state', 'timestamp']);
+
+        allow delete: if isOwner(userId) && isVerifiedUser() && isValidId(bookmarkId);
+      }
+
+      // Nested History subcollection
+      match /history/{historyId} {
+        allow get: if isOwner(userId) && isValidId(historyId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && isVerifiedUser()
+          && isValidId(historyId)
+          && isValidHistory(request.resource.data)
+          && request.resource.data.userId == userId
+          && request.resource.data.id == historyId;
+
+        allow update: if isOwner(userId)
+          && isVerifiedUser()
+          && isValidId(historyId)
+          && isValidHistory(request.resource.data)
+          && request.resource.data.userId == userId
+          && request.resource.data.id == historyId
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['id', 'userId', 'toolId', 'label', 'timestamp']);
+
+        allow delete: if isOwner(userId) && isVerifiedUser() && isValidId(historyId);
+      }
+
+      // Nested Preferences collection (document name is "settings")
+      match /preferences/{prefDocId} {
+        allow get: if isOwner(userId) && prefDocId == 'settings';
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && isVerifiedUser()
+          && prefDocId == 'settings'
+          && isValidPreference(request.resource.data)
+          && request.resource.data.userId == userId;
+
+        allow update: if isOwner(userId)
+          && isVerifiedUser()
+          && prefDocId == 'settings'
+          && isValidPreference(request.resource.data)
+          && request.resource.data.userId == userId
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['userId', 'activeView', 'isSidebarOpen', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isVerifiedUser() && prefDocId == 'settings';
+      }
+    }
+  }
+}
